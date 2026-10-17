@@ -1,0 +1,323 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Occupancy Dashboard</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
+<style>
+:root {
+    --bg: #080b0f; --panel: #10151b; --panel2: #151b22; --border: #222b34;
+    --text: #e8eef2; --muted: #71808c;
+    --cyan: #4fd8e8; --green: #57e389; --yellow: #ffb000; --red: #ff5252;
+}
+* { box-sizing: border-box; }
+body {
+    margin: 0;
+    background: radial-gradient(circle at top right, #12212a 0, var(--bg) 40%);
+    color: var(--text);
+    font-family: Inter, ui-sans-serif, system-ui, -apple-system, sans-serif;
+}
+.container { max-width: 1500px; margin: auto; padding: 28px; }
+.header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 25px; flex-wrap: wrap; gap: 14px; }
+.title { font-size: 22px; font-weight: 700; letter-spacing: 0.08em; }
+.subtitle { color: var(--muted); font-size: 12px; margin-top: 5px; }
+.system { display: flex; align-items: center; gap: 9px; font-size: 12px; }
+.dot { width: 9px; height: 9px; border-radius: 50%; background: var(--green); box-shadow: 0 0 12px var(--green); }
+.dot.bad { background: var(--red); box-shadow: 0 0 12px var(--red); }
+
+.infobar {
+    display: flex; align-items: center; gap: 18px;
+    background: var(--panel); border: 1px solid var(--border);
+    border-radius: 10px; padding: 10px 14px; margin-bottom: 18px; flex-wrap: wrap;
+    font-size: 12px; color: var(--muted);
+}
+.infobar b { color: var(--cyan); }
+
+.metrics { display: grid; grid-template-columns: 1.5fr 1fr 1fr 1fr; gap: 14px; }
+.card { background: linear-gradient(145deg, var(--panel2), var(--panel)); border: 1px solid var(--border); border-radius: 14px; padding: 20px; }
+.card-label { color: var(--muted); text-transform: uppercase; font-size: 10px; letter-spacing: 0.12em; }
+.big { font-size: 62px; line-height: 1; margin-top: 12px; color: var(--cyan); font-weight: 700; }
+.metric { font-size: 28px; margin-top: 13px; font-weight: 600; }
+.good { color: var(--green); } .warn { color: var(--yellow); } .bad { color: var(--red); }
+
+.grid { display: grid; grid-template-columns: 2fr 1fr; gap: 14px; margin-top: 14px; }
+.chart { height: 390px; }
+.nodes { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; margin-top: 14px; }
+.node { min-height: 150px; }
+.node-header { display: flex; justify-content: space-between; align-items: center; }
+.node-name { font-weight: 700; letter-spacing: 0.05em; }
+.node-status { font-size: 10px; padding: 4px 8px; border-radius: 20px; background: #183020; color: var(--green); }
+.node-status.offline { background: #351919; color: var(--red); }
+.node-count { font-size: 38px; margin-top: 20px; }
+.node-meta { display: flex; justify-content: space-between; color: var(--muted); font-size: 11px; margin-top: 8px; }
+
+.stats { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; margin-top: 15px; }
+.stat { background: #0b1015; padding: 12px; border-radius: 9px; }
+.stat-name { font-size: 10px; color: var(--muted); }
+.stat-value { margin-top: 5px; font-size: 18px; }
+
+.devices { max-height: 280px; overflow: auto; margin-top: 14px; }
+.device { display: flex; justify-content: space-between; padding: 8px 4px; border-bottom: 1px solid #192027; font-size: 11px; }
+.device-id { color: var(--muted); }
+.badge { padding: 3px 7px; border-radius: 6px; background: #18232a; color: var(--cyan); }
+
+.footer { margin-top: 18px; color: var(--muted); font-size: 10px; display: flex; justify-content: space-between; flex-wrap: wrap; gap: 8px; }
+.footer a { color: var(--cyan); text-decoration: none; }
+
+@media(max-width: 1000px) { .metrics { grid-template-columns: repeat(2, 1fr); } .grid { grid-template-columns: 1fr; } .nodes { grid-template-columns: 1fr; } }
+@media(max-width: 600px) { .container { padding: 15px; } .metrics { grid-template-columns: 1fr; } .header { align-items: flex-start; } }
+</style>
+</head>
+<body>
+<div class="container">
+
+<div class="header">
+  <div>
+    <div class="title">OCCUPANCY DASHBOARD</div>
+    <div class="subtitle">MULTI-NODE WIFI SENSOR FUSION</div>
+  </div>
+  <div class="system">
+    <div id="systemDot" class="dot"></div>
+    <div id="systemText">INITIALIZING</div>
+  </div>
+</div>
+
+<div class="infobar">
+  <span>RSSI presence gate: <b id="rssiThreshold">--</b> dBm (weaker signals treated as bleed-through)</span>
+  <span>Display mode: <b id="displayModeChip">--</b> (double-clap on the control strip to cycle)</span>
+</div>
+
+<div class="metrics">
+  <div class="card">
+    <div class="card-label">Confirmed Occupancy</div>
+    <div class="big" id="occupancy">--</div>
+    <div class="subtitle">devices seen consistently, RSSI-gated</div>
+  </div>
+  <div class="card">
+    <div class="card-label">Confidence</div>
+    <div class="metric good" id="confidence">--</div>
+    <div class="subtitle">sensor quality score</div>
+  </div>
+  <div class="card">
+    <div class="card-label">Candidates</div>
+    <div class="metric" id="candidates">--</div>
+    <div class="subtitle">seen, not yet confirmed</div>
+  </div>
+  <div class="card">
+    <div class="card-label">Unusual Jump</div>
+    <div class="metric" id="anomaly">NORMAL</div>
+    <div class="subtitle" id="anomalyScore">score: --</div>
+  </div>
+</div>
+
+<div class="grid">
+  <div class="card">
+    <div class="card-label">Occupancy History</div>
+    <div class="chart"><canvas id="occupancyChart"></canvas></div>
+  </div>
+  <div class="card">
+    <div class="card-label">Sensor Stats</div>
+    <div class="stats" style="margin-top:8px;">
+      <div class="stat"><div class="stat-name">NODE AGREEMENT</div><div class="stat-value" id="agreement">--</div></div>
+      <div class="stat"><div class="stat-name">MEAN RSSI</div><div class="stat-value" id="rssi">--</div></div>
+      <div class="stat"><div class="stat-name">RSSI VARIANCE</div><div class="stat-value" id="rssiStd">--</div></div>
+      <div class="stat"><div class="stat-name">DETECTION RATE</div><div class="stat-value" id="probeRate">--</div></div>
+    </div>
+  </div>
+</div>
+
+<div class="nodes" id="nodes"></div>
+
+<div class="card" style="margin-top:14px;">
+  <div class="card-label">Fused Sensor Observations</div>
+  <div class="devices" id="devices"></div>
+</div>
+
+<div class="footer">
+  <div id="lastUpdate">Last update: --</div>
+  <div>ESP32 WI-FI OCCUPANCY SENSING</div>
+</div>
+
+</div>
+
+<script>
+let chart;
+let chartNodeNames = [];
+
+const NODE_COLOR_PALETTE = ["#ffb000", "#57e389", "#ff5252", "#a78bfa", "#4fd8e8"];
+
+function nodeColor(index) {
+    return NODE_COLOR_PALETTE[index % NODE_COLOR_PALETTE.length];
+}
+
+function initializeChart() {
+    const ctx = document.getElementById("occupancyChart").getContext("2d");
+    chart = new Chart(ctx, {
+        type: "line",
+        data: {
+            labels: [],
+            datasets: [{
+                label: "Confirmed (fused)",
+                data: [],
+                borderWidth: 3,
+                borderColor: "#4fd8e8",
+                backgroundColor: "rgba(79,216,232,0.15)",
+                fill: true,
+                tension: 0.35,
+                pointRadius: 0,
+                order: 0,
+            }]
+        },
+        options: {
+            responsive: true, maintainAspectRatio: false, animation: false,
+            plugins: {
+                legend: {
+                    display: true,
+                    labels: { color: "#71808c", boxWidth: 12, font: { size: 10 } }
+                }
+            },
+            scales: {
+                x: { ticks: { color: "#71808c", maxTicksLimit: 8 }, grid: { color: "#172027" } },
+                y: { beginAtZero: true, ticks: { color: "#71808c" }, grid: { color: "#172027" } }
+            }
+        }
+    });
+}
+
+function ensureNodeDatasets(nodeNames) {
+    // Only rebuild if the set of known node names actually changed --
+    // avoids recreating datasets (and losing their draw state) every poll.
+    const changed = nodeNames.length !== chartNodeNames.length ||
+        nodeNames.some((n, i) => n !== chartNodeNames[i]);
+
+    if (!changed) return;
+
+    chartNodeNames = nodeNames.slice();
+
+    // Dataset 0 is always the master fused line; datasets 1..N are per-node.
+    chart.data.datasets = [chart.data.datasets[0]];
+
+    nodeNames.forEach((name, i) => {
+        chart.data.datasets.push({
+            label: name,
+            data: [],
+            borderWidth: 1.5,
+            borderColor: nodeColor(i),
+            backgroundColor: "transparent",
+            fill: false,
+            tension: 0.35,
+            pointRadius: 0,
+            borderDash: [4, 2],
+            order: 1,
+        });
+    });
+}
+
+function updateChart(history, nodeNames) {
+    if (!chart) return;
+
+    ensureNodeDatasets(nodeNames);
+
+    const recent = history.slice(-180);
+    chart.data.labels = recent.map(x => new Date(x.timestamp * 1000).toLocaleTimeString([], {hour:"2-digit",minute:"2-digit",second:"2-digit"}));
+    chart.data.datasets[0].data = recent.map(x => x.occupancy);
+
+    chartNodeNames.forEach((name, i) => {
+        chart.data.datasets[i + 1].data = recent.map(x => {
+            const byName = x.node_counts_by_name || {};
+            const v = byName[name];
+            return (v === null || v === undefined) ? null : v; // null -> gap, not a false drop to 0
+        });
+    });
+
+    chart.update();
+}
+
+function updateDashboard(d) {
+    document.getElementById("occupancy").textContent = d.room_count;
+    document.getElementById("confidence").textContent = d.confidence + "%";
+    document.getElementById("candidates").textContent = d.candidate_count;
+    document.getElementById("rssiThreshold").textContent = d.rssi_threshold;
+    document.getElementById("displayModeChip").textContent = (d.display_mode || "--").toUpperCase();
+
+    const anomaly = document.getElementById("anomaly");
+    anomaly.textContent = d.unusual_jump ? "DETECTED" : "NORMAL";
+    anomaly.className = "metric " + (d.unusual_jump ? "bad" : "good");
+    document.getElementById("anomalyScore").textContent = "score: " + d.jump_score;
+
+    document.getElementById("agreement").textContent = d.node_agreement + "%";
+    document.getElementById("rssi").textContent = d.mean_rssi + " dBm";
+    document.getElementById("rssiStd").textContent = d.rssi_stddev + " dB";
+    document.getElementById("probeRate").textContent = d.probe_rate;
+
+    const statuses = Object.values(d.per_node_status);
+    const online = statuses.filter(x => x.ok).length;
+    const systemDot = document.getElementById("systemDot");
+    const systemText = document.getElementById("systemText");
+
+    if (online === statuses.length) {
+        systemDot.className = "dot";
+        systemText.textContent = "ALL SYSTEMS ONLINE";
+    } else {
+        systemDot.className = "dot bad";
+        systemText.textContent = online + "/" + statuses.length + " NODES ONLINE";
+    }
+
+    const nodes = document.getElementById("nodes");
+    nodes.innerHTML = "";
+    for (const [name, s] of Object.entries(d.per_node_status)) {
+        const div = document.createElement("div");
+        div.className = "card node";
+        div.innerHTML = `
+            <div class="node-header">
+                <div class="node-name">${name}</div>
+                <div class="node-status ${s.ok ? "" : "offline"}">${s.ok ? "ONLINE" : "OFFLINE"}</div>
+            </div>
+            <div class="node-count">${s.ok ? s.devices : "--"}</div>
+            <div class="node-meta"><span>detected devices</span><span>${s.ok ? "ACTIVE" : "NO DATA"}</span></div>
+        `;
+        nodes.appendChild(div);
+    }
+
+    const devices = document.getElementById("devices");
+    devices.innerHTML = "";
+    if (!d.fused_devices.length) {
+        devices.innerHTML = `<div class="subtitle">No active observations</div>`;
+    } else {
+        for (const dev of d.fused_devices) {
+            const row = document.createElement("div");
+            row.className = "device";
+            row.innerHTML = `
+                <span class="device-id">${dev.id}</span>
+                <span>${dev.rssi} dBm</span>
+                <span class="badge">${dev.seen_by.length} node${dev.seen_by.length !== 1 ? "s" : ""}</span>
+            `;
+            devices.appendChild(row);
+        }
+    }
+
+    updateChart(d.history || [], Object.keys(d.per_node_status || {}).sort());
+
+    if (d.last_update) {
+        document.getElementById("lastUpdate").textContent = "Last update: " + new Date(d.last_update * 1000).toLocaleTimeString();
+    }
+}
+
+async function refresh() {
+    try {
+        const response = await fetch("/api/fused", { cache: "no-store" });
+        const data = await response.json();
+        updateDashboard(data);
+    } catch (error) {
+        document.getElementById("systemText").textContent = "SERVER ERROR";
+        document.getElementById("systemDot").className = "dot bad";
+    }
+}
+
+initializeChart();
+refresh();
+setInterval(refresh, 2000);
+</script>
+</body>
+</html>
